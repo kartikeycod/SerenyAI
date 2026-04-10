@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk"; // 👈 New Import
 import "./App.css";
 
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+// Initialize Groq with your new key
+const groq = new Groq({ 
+  apiKey: import.meta.env.VITE_GROQ_API_KEY,
+  dangerouslyAllowBrowser: true // Required since we are calling from the frontend
+});
 
 export default function App() {
   const [messages, setMessages] = useState([]);
@@ -26,43 +30,29 @@ export default function App() {
     ]);
   }, []);
 
-  // 🌐 Text-to-speech function for AI replies
- const speak = (text) => {
-  const synth = window.speechSynthesis;
-  if (!synth) return;
+  const speak = (text) => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "en-IN";
+    utter.rate = 1.2; 
+    utter.pitch = 1.05;
+    synth.cancel();
+    synth.speak(utter);
+  };
 
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "en-IN";
-
-  // 🎵 Adjust tone and speed
-  utter.rate = 2.0;   // ✅ Speed up slightly (1.0 = normal, 2.0 = max)
-  utter.pitch = 1.05;  // Adds a gentle friendly tone
-
-  synth.cancel(); // stop any previous speech
-  synth.speak(utter);
-};
-
-
-  // 🎙️ Voice input setup
   const startListening = () => {
     if (!("webkitSpeechRecognition" in window)) {
       alert("Speech recognition not supported in this browser 😢");
       return;
     }
-
     const recognition = new window.webkitSpeechRecognition();
     recognition.lang = "en-IN";
-    recognition.continuous = false;
-    recognition.interimResults = false;
-
     recognition.onstart = () => setListening(true);
     recognition.onend = () => setListening(false);
-
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      setInput(transcript);
+      setInput(event.results[0][0].transcript);
     };
-
     recognition.start();
     recognitionRef.current = recognition;
   };
@@ -76,31 +66,31 @@ export default function App() {
     setLoading(true);
 
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      // 🚀 Groq Chat Completion Logic
+      const chatCompletion = await groq.chat.completions.create({
+        messages: [
+          {
+            role: "system",
+            content: "You are MindMate, a compassionate mental-health support chatbot. Reply in an empathetic, kind tone. Never diagnose or give medical advice. If crisis is mentioned, urge seeking professional help. Keep replies very short (1-2 lines)."
+          },
+          {
+            role: "user",
+            content: input
+          }
+        ],
+        model: "llama-3.3-70b-versatile", // Powerful and smart
+        temperature: 0.7,
+      });
 
-      const prompt = `
-You are MindMate, a compassionate mental-health support chatbot.
-Always reply in an empathetic, kind tone.
-Never diagnose or give medical advice; instead, offer gentle reflections,
-coping suggestions, or positive reinforcement.
-If someone mentions crisis or self-harm, urge them to reach out to a trusted friend, family member, or local helpline immediately . Also it will be best if you confine your reply in a line or a two .
+      const responseText = chatCompletion.choices[0]?.message?.content || "";
 
-User: ${userMsg.text}
-      `;
-
-      const result = await model.generateContent(prompt);
-      const text = await result.response.text();
-
-      setMessages((prev) => [...prev, { role: "ai", text }]);
-      speak(text); // 👈 Speak AI response aloud
+      setMessages((prev) => [...prev, { role: "ai", text: responseText }]);
+      speak(responseText);
     } catch (error) {
-      console.error("Gemini API Error:", error);
+      console.error("Groq API Error:", error);
       setMessages((prev) => [
         ...prev,
-        {
-          role: "ai",
-          text: "⚠️ Sorry, something went wrong. Please check your API key or try again.",
-        },
+        { role: "ai", text: "⚠️ I'm having trouble connecting right now. Please try again later." },
       ]);
     } finally {
       setLoading(false);
@@ -117,17 +107,12 @@ User: ${userMsg.text}
         <div className="chat-messages">
           {messages.map((msg, i) => (
             <div key={i} className="message-wrapper">
-              <div
-                className={`message-bubble ${
-                  msg.role === "user" ? "message-user" : "message-ai"
-                }`}
-              >
+              <div className={`message-bubble ${msg.role === "user" ? "message-user" : "message-ai"}`}>
                 {msg.text}
               </div>
             </div>
           ))}
-
-          {loading && <p className="message-loading">Typing...</p>}
+          {loading && <p className="message-loading">Thinking...</p>}
           <div ref={messagesEndRef} />
         </div>
 
@@ -141,18 +126,10 @@ User: ${userMsg.text}
             onKeyDown={(e) => e.key === "Enter" && sendMessage()}
             disabled={loading}
           />
-          <button
-            onClick={startListening}
-            className={`mic-button ${listening ? "listening" : ""}`}
-            disabled={loading}
-          >
+          <button onClick={startListening} className={`mic-button ${listening ? "listening" : ""}`} disabled={loading}>
             🎤
           </button>
-          <button
-            onClick={sendMessage}
-            className="send-button"
-            disabled={loading}
-          >
+          <button onClick={sendMessage} className="send-button" disabled={loading}>
             Send
           </button>
         </div>
